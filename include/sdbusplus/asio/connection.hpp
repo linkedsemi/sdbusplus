@@ -340,7 +340,8 @@ class connection : public sdbusplus::bus_t
             }
             else
             {
-                read_wait();
+                // read_wait();
+                read_immediate();
             }
         });
     }
