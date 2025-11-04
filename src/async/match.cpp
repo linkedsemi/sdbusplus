@@ -1,3 +1,4 @@
+#ifndef __ZEPHYR__
 #include <sdbusplus/async/match.hpp>
 
 namespace sdbusplus::async
@@ -99,3 +100,4 @@ void match::handle_completion(std::unique_lock<std::mutex>&& l) noexcept
 }
 
 } // namespace sdbusplus::async
+#endif

@@ -2,7 +2,9 @@
 
 #include <sdbusplus/async/context.hpp>
 #include <sdbusplus/async/execution.hpp>
+#ifndef __ZEPHYR__ 
 #include <sdbusplus/event.hpp>
+#endif
 
 namespace sdbusplus::async
 {

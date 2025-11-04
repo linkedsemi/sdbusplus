@@ -1,13 +1,195 @@
 #pragma once
 
+#ifndef __ZEPHYR__
 #include <systemd/sd-event.h>
 
+#endif
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <chrono>
 #include <functional>
 #include <stdexcept>
+#include <memory>
+#include <iostream>
 
 namespace phosphor
 {
+#ifdef __ZEPHYR__
+/** @class Timer
+ *  @brief Manages starting watchdog timers and handling timeouts
+ */
+class Timer
+{
+  public:
+    /** @brief Only need the default Timer */
+    Timer() = delete;
+    Timer(const Timer&) = delete;
+    Timer& operator=(const Timer&) = delete;
+    Timer(Timer&&) = delete;
+    Timer& operator=(Timer&&) = delete;
+
+    /** @brief Constructs timer object
+     *         Uses the default io_context object
+     *
+     *  @param[in] userCallBack - optional function callback for timer
+     *                            expirations
+     */
+    Timer(std::function<void()> userCallBack = nullptr) :
+        ioContext(std::make_shared<boost::asio::io_context>()),
+        workGuard(boost::asio::make_work_guard(*ioContext)),
+        timer(*ioContext),
+        expired(false),
+        userCallBack(userCallBack)
+    {
+        // Initialize the timer
+        initialize();
+    }
+
+    /** @brief Constructs timer object
+     *
+     *  @param[in] ioContext - asio::io_context pointer
+     *  @param[in] userCallBack - optional function callback for timer
+     *                            expirations
+     */
+    Timer(std::shared_ptr<boost::asio::io_context> ioContext, std::function<void()> userCallBack = nullptr) :
+        ioContext(ioContext),
+        workGuard(boost::asio::make_work_guard(*ioContext)),
+        timer(*ioContext),
+        expired(false),
+        userCallBack(userCallBack)
+    {
+        // Initialize the timer
+        initialize();
+    }
+
+    ~Timer()
+    {
+        stop();
+        // ioContext->stop();
+        // if (timerThread.joinable())
+        // {
+        //     timerThread.join();
+        // }
+    }
+
+    inline bool isExpired() const
+    {
+        return expired;
+    }
+
+    inline bool isRunning() const
+    {
+        return !timer.expires_at().time_since_epoch().count() == 0;
+    }
+
+    /** @brief Starts the timer with specified expiration value.
+     *  input is an offset from the current steady_clock
+     */
+    int start(std::chrono::microseconds usec, bool periodic = false)
+    {
+        // Disable the timer
+        stop();
+        expired = false;
+        duration = usec;
+        this->periodic = periodic;
+
+        // Set the time
+        timer.expires_after(usec);
+        timer.async_wait([this](auto&& ec) {
+            if (!ec)
+            {
+                timeoutHandler();
+            }
+        });
+
+        return 0;
+    }
+
+    int stop()
+    {
+        timer.cancel();
+        return 0;
+    }
+
+  private:
+    /** @brief the asio::io_context structure */
+    std::shared_ptr<boost::asio::io_context> ioContext;
+
+    /** @brief Work guard to keep io_context running */
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard;
+
+    /** @brief asio::steady_timer */
+    boost::asio::steady_timer timer;
+
+    /** @brief Returns if the associated timer is expired
+     *
+     *  This is set to true when the timeoutHandler is called into
+     */
+    bool expired;
+
+    /** @brief Optional function to call on timer expiration */
+    std::function<void()> userCallBack;
+
+    /** @brief timer duration */
+    std::chrono::microseconds duration;
+
+    /** @brief timer run type (oneshot or periodic) */
+    bool periodic;
+
+    /** @brief Thread to run the asio::io_context */
+//    std::thread timerThread;
+
+    /** @brief Initializes the timer object and starts the io_context thread
+     *
+     *  @error std::runtime exception thrown
+     */
+    void initialize()
+    {
+        if (!ioContext)
+        {
+            throw std::runtime_error("Timer has no io_context");
+        }
+
+        // timerThread = std::thread([this]() {
+        //     ioContext->run();
+        // });
+    }
+
+    /** @brief Callback function when timer goes off
+     *
+     *  On getting the signal, initiate the hard power off request
+     *
+     */
+    void timeoutHandler()
+    {
+        expired = true;
+
+        // Call optional user call back function if available
+        if (userCallBack)
+        {
+            userCallBack();
+        }
+
+        if (periodic)
+        {
+            // Reset the timer for periodic operation
+            timer.expires_after(duration);
+            timer.async_wait([this](auto&& ec) {
+                if (!ec)
+                {
+                    std::cout << "timeoutHandler" << std::endl;
+                    timeoutHandler();
+                }
+            });
+        }
+        else
+        {
+            stop();
+        }
+    }
+};
+
+#else
 
 /** @class Timer
  *  @brief Manages starting watchdog timers and handling timeouts
@@ -245,5 +427,7 @@ class Timer
         return duration_cast<microseconds>(usec);
     }
 };
+
+#endif
 
 } // namespace phosphor

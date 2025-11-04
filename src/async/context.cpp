@@ -1,3 +1,4 @@
+#ifndef __ZEPHYR__
 #include <systemd/sd-bus.h>
 
 #include <sdbusplus/async/context.hpp>
@@ -372,3 +373,4 @@ int context::dbus_event_handle(sd_event_source*, int, uint32_t, void* data)
 }
 
 } // namespace sdbusplus::async
+#endif

@@ -157,9 +157,16 @@ struct append_single
     {
         // For this default implementation, we need to ensure that only
         // basic types are used.
+#ifdef __ZEPHYR__
+        static_assert(std::is_fundamental_v<Td<T>> ||
+                          std::is_convertible_v<Td<T>, const char*> ||
+                          std::is_convertible_v<Td<T>, const unsigned char*>,
+                      "Non-basic types are not allowed.");
+#else
         static_assert(std::is_fundamental_v<Td<T>> ||
                           std::is_convertible_v<Td<T>, const char*>,
                       "Non-basic types are not allowed.");
+#endif
 
         constexpr auto dbusType = std::get<0>(types::type_id<T>());
         intf->sd_bus_message_append_basic(m, dbusType,

@@ -1,3 +1,4 @@
+#ifndef __ZEPHYR__
 #include <sys/eventfd.h>
 #include <unistd.h>
 
@@ -196,3 +197,4 @@ std::unique_lock<std::recursive_mutex> event::obtain_lock()
 }
 
 } // namespace sdbusplus::event
+#endif

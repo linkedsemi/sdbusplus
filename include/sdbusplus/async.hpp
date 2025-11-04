@@ -6,4 +6,6 @@
 #include <sdbusplus/async/proxy.hpp>
 #include <sdbusplus/async/scope.hpp>
 #include <sdbusplus/async/task.hpp>
+#ifndef __ZEPHYR__
 #include <sdbusplus/async/timer.hpp>
+#endif

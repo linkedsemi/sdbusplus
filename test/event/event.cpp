@@ -1,3 +1,4 @@
+#ifndef __ZEPHYR__
 #include <sdbusplus/event.hpp>
 
 #include <chrono>
@@ -80,3 +81,4 @@ TEST_F(Event, Timer)
     EXPECT_TRUE(stop - start > timeout);
     EXPECT_TRUE(stop - start < timeout * 3);
 }
+#endif

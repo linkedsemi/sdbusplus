@@ -1,7 +1,9 @@
 #pragma once
 
 #include <systemd/sd-bus.h>
+#ifndef __ZEPHYR__
 #include <systemd/sd-event.h>
+#endif
 
 #include <sdbusplus/exception.hpp>
 #include <sdbusplus/message.hpp>
@@ -207,10 +209,12 @@ struct bus
     auto process_discard()
     {
         int r = _intf->sd_bus_process(_bus.get(), nullptr);
+#ifndef __ZEPHYR__
         if (r < 0)
         {
             throw exception::SdBusError(-r, "sd_bus_process discard");
         }
+#endif
         return r > 0;
     }
 

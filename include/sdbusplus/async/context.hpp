@@ -4,7 +4,9 @@
 #include <sdbusplus/async/scope.hpp>
 #include <sdbusplus/async/task.hpp>
 #include <sdbusplus/bus.hpp>
+#ifndef __ZEPHYR__
 #include <sdbusplus/event.hpp>
+#endif
 
 #include <condition_variable>
 #include <deque>
@@ -58,6 +60,7 @@ class context : public bus::details::bus_friend
      *
      * @param[in] sender - The Sender to run.
      */
+#ifndef __ZEPHYR__
     template <execution::sender_of<execution::set_value_t()> Snd>
     void spawn(Snd&& sender)
     {
@@ -68,6 +71,7 @@ class context : public bus::details::bus_friend
 
         spawn_watcher();
     }
+#endif
 
     bus_t& get_bus() noexcept
     {
@@ -88,11 +92,13 @@ class context : public bus::details::bus_friend
 
   private:
     bus_t bus;
+#ifndef __ZEPHYR__
     event_source_t dbus_source;
     event_t event_loop{};
 
     /** The async run-loop from std::execution. */
     execution::run_loop loop{};
+#endif
     /** The worker thread to handle async tasks. */
     std::thread worker_thread{};
     /** Stop source */
@@ -110,7 +116,9 @@ class context : public bus::details::bus_friend
     std::condition_variable caller_wait{};
 
     std::deque<std::exception_ptr> pending_exceptions = {};
+#ifndef __ZEPHYR__
     bool spawn_watcher_running = false;
+#endif
 
     /** Completion object to signal the worker that 'sd_bus_wait' is done. */
     details::wait_process_completion* staged = nullptr;
@@ -118,21 +126,28 @@ class context : public bus::details::bus_friend
     bool wait_process_stopped = false;
 
     void worker_run();
+#ifndef __ZEPHYR__
     void spawn_complete(std::exception_ptr&& = {});
+#endif
     void check_stop_requested();
+#ifndef __ZEPHYR__
     void spawn_watcher();
+#endif
 
     void caller_run();
     void rethrow_pending_exception();
     void wait_for_wait_process_stopped();
 
+#ifndef __ZEPHYR__
     static int dbus_event_handle(sd_event_source*, int, uint32_t, void*);
+#endif
 };
 
 namespace details
 {
 struct context_friend
 {
+#ifndef __ZEPHYR__
     static event_t& get_event_loop(context& ctx)
     {
         return ctx.event_loop;
@@ -142,6 +157,7 @@ struct context_friend
     {
         return ctx.loop.get_scheduler();
     }
+#endif
 };
 } // namespace details
 

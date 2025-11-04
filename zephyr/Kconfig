@@ -1,0 +1,4 @@
+
+config OPENBMC_SDBUSPLUS
+    bool "openbmc sdbusplus"
+    
