@@ -1,4 +1,6 @@
 
 config OPENBMC_SDBUSPLUS
     bool "openbmc sdbusplus"
-    
+    select OPENBMC_NLOHMANN_JSON
+    select CPP_EXCEPTIONS
+    select POSIX_API
