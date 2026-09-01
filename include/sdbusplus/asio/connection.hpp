@@ -37,6 +37,9 @@
 #include <chrono>
 #include <string>
 #include <tuple>
+#ifdef __ZEPHYR__
+#include <poll.h>
+#endif
 
 namespace sdbusplus
 {
@@ -91,9 +94,65 @@ class connection : public sdbusplus::bus_t
 #endif
         using return_t = std::conditional_t<is_yield, message_t, message_t&>;
         using callback_t = void(boost::system::error_code, return_t);
+#ifdef __ZEPHYR__
+        /* The initiator runs synchronously inside async_initiate(): by the
+         * time the return expression is evaluated, the message has either
+         * been written to the socket or been left in the outgoing wqueue
+         * after a partial write (socket buffer full while the broker is
+         * busy). This guard arms the writability watch right afterwards.
+         * Without this, a queued message deadlocks: nothing else wakes the
+         * io_context up, and dispatch_wqueue() only ever runs from
+         * sd_bus_process(), which this port only invokes on readability. */
+        struct ArmWriteWatchGuard
+        {
+            connection* self;
+            ~ArmWriteWatchGuard()
+            {
+                self->arm_write_watch();
+            }
+        } armGuard{this};
         return boost::asio::async_initiate<CompletionToken, callback_t>(
             detail::async_send_handler(get(), m, timeout), token);
+#else
+        return boost::asio::async_initiate<CompletionToken, callback_t>(
+            detail::async_send_handler(get(), m, timeout), token);
+#endif
     }
+
+#ifdef __ZEPHYR__
+    /** @brief Register a writability watch while sd_bus_get_events() reports
+     *         POLLOUT (i.e. the outgoing wqueue is non-empty).
+     *
+     *  When the socket becomes writable again, sd_bus_process() ->
+     *  dispatch_wqueue() flushes the queued messages; if the queue is not
+     *  fully drained (more partial writes) the watch re-arms itself.
+     */
+    void arm_write_watch()
+    {
+        int ev = get_events();
+        if (ev < 0 || (ev & POLLOUT) == 0 || writeWatchArmed_)
+        {
+            return;
+        }
+        writeWatchArmed_ = true;
+        socket.async_write_some(
+            boost::asio::null_buffers(),
+            [&](const boost::system::error_code& ec, std::size_t) {
+            writeWatchArmed_ = false;
+            if (ec)
+            {
+                return;
+            }
+            /* Writable again: flush the stuck messages. */
+            process_discard();
+            /* Not fully drained? watch again. */
+            arm_write_watch();
+            /* Resume the read loop so replies produced by the flushed
+             * requests get processed. */
+            read_immediate();
+            });
+    }
+#endif
 
     /** @brief Perform an asynchronous method call, with input parameter packing
      *         and return value unpacking.
@@ -311,6 +370,9 @@ class connection : public sdbusplus::bus_t
   private:
     boost::asio::io_context& io_;
     boost::asio::posix::stream_descriptor socket;
+#ifdef __ZEPHYR__
+    bool writeWatchArmed_ = false;
+#endif
 
     void read_wait()
     {
@@ -330,6 +392,14 @@ class connection : public sdbusplus::bus_t
                     read_wait();
                 }
             });
+#ifdef __ZEPHYR__
+        /* Safety net: if a message was queued while this read watch was
+         * pending (it can happen when a send occurs after the last read_wait
+         * registration), make sure the writability watch is armed too. The
+         * primary arming happens in async_send(), right after the message is
+         * enqueued. */
+        arm_write_watch();
+#endif
     }
     void read_immediate()
     {

@@ -413,6 +413,22 @@ struct bus
         return _intf->sd_bus_get_fd(_bus.get());
     }
 
+#ifdef __ZEPHYR__
+    /** @brief Query which I/O events the bus is currently waiting for
+     *         (POLLIN / POLLOUT bitmask, sd_bus_get_events()).
+     *
+     *  Zephyr-only helper: the asio connection watches only readability,
+     *  so it uses this to also register a writability watch whenever the
+     *  outgoing wqueue is non-empty (POLLOUT), otherwise messages stuck
+     *  in the wqueue (partial write while the broker is busy) can never
+     *  be flushed and the async calls that produced them never complete.
+     */
+    auto get_events()
+    {
+        return sd_bus_get_events(_bus.get());
+    }
+#endif
+
     /** @brief Attach the bus with a sd-event event loop object.
      *
      *  @param[in] event - sd_event object.
