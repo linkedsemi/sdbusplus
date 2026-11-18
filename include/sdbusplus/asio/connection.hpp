@@ -35,10 +35,41 @@
 #include <sdbusplus/utility/type_traits.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <tuple>
 #ifdef __ZEPHYR__
 #include <poll.h>
+#endif
+
+#if defined(__ZEPHYR__) && defined(CONFIG_OPENBMC_IPMI_LAT)
+/*
+ * Latency-probe counters for the bus read/watch loop (defined in the
+ * application's ipmi_lat.c and printed by "ipmi_lat dump").
+ *
+ *   z_lat_conn_rwake  read watch fired
+ *   z_lat_conn_ridle  ... and sd_bus_process() had nothing to do
+ *   z_lat_conn_warem  writability watch armed (wqueue was non-empty)
+ *
+ * A thread that burns CPU with no D-Bus traffic in flight shows up as a large,
+ * growing rwake with ridle == rwake: the readiness notification keeps firing
+ * while there is nothing to read, so the io_context never blocks.
+ */
+extern "C"
+{
+/* k_cycle_get_32() is a static inline in <zephyr/kernel.h> and has no symbol,
+ * so the cycle counter and the (atomic) accounting both come from ipmi_lat.c. */
+extern uint32_t ipmi_lat_cyc(void);
+extern void ipmi_lat_conn_proc(uint32_t cycles);
+extern volatile uint32_t z_lat_conn_rwake;
+extern volatile uint32_t z_lat_conn_ridle;
+extern volatile uint32_t z_lat_conn_warem;
+
+/* Entering sd_bus_process() on a traced connection, see enable_lat_trace()
+ * below. Emitted only where a request slot expects it, never from every
+ * service's connection. */
+extern void ipmi_lat_mark_proc_in(void);
+}
 #endif
 
 namespace sdbusplus
@@ -120,6 +151,17 @@ class connection : public sdbusplus::bus_t
     }
 
 #ifdef __ZEPHYR__
+    /** @brief Mark every sd_bus_process() of this connection in "ipmi_lat".
+     *
+     *  Only the connection that serves xyz.openbmc_project.Ipmi.Server should
+     *  enable it: the marks bracket one request's handoff windows, and marks
+     *  from other services would land in the same request slot.
+     */
+    void enable_lat_trace()
+    {
+        latTrace_ = true;
+    }
+
     /** @brief Register a writability watch while sd_bus_get_events() reports
      *         POLLOUT (i.e. the outgoing wqueue is non-empty).
      *
@@ -135,6 +177,9 @@ class connection : public sdbusplus::bus_t
             return;
         }
         writeWatchArmed_ = true;
+#if defined(CONFIG_OPENBMC_IPMI_LAT)
+        z_lat_conn_warem++;
+#endif
         socket.async_write_some(
             boost::asio::null_buffers(),
             [&](const boost::system::error_code& ec, std::size_t) {
@@ -144,7 +189,7 @@ class connection : public sdbusplus::bus_t
                 return;
             }
             /* Writable again: flush the stuck messages. */
-            process_discard();
+            process_discard_timed();
             /* Not fully drained? watch again. */
             arm_write_watch();
             /* Resume the read loop so replies produced by the flushed
@@ -372,7 +417,30 @@ class connection : public sdbusplus::bus_t
     boost::asio::posix::stream_descriptor socket;
 #ifdef __ZEPHYR__
     bool writeWatchArmed_ = false;
+    bool latTrace_ = false;
 #endif
+
+    /* Instrumented sd_bus_process(): "ipmi_lat dump" prints the average CPU
+     * cost of one call. This is what says whether a service thread burns its
+     * cycles inside its handlers or inside the bus machinery itself. */
+    bool process_discard_timed()
+    {
+#if defined(__ZEPHYR__) && defined(CONFIG_OPENBMC_IPMI_LAT)
+        const uint32_t t0 = ipmi_lat_cyc();
+
+        if (latTrace_)
+        {
+            ipmi_lat_mark_proc_in();
+        }
+
+        bool r = process_discard();
+
+        ipmi_lat_conn_proc(ipmi_lat_cyc() - t0);
+        return r;
+#else
+        return process_discard();
+#endif
+    }
 
     void read_wait()
     {
@@ -383,7 +451,15 @@ class connection : public sdbusplus::bus_t
                 {
                     return;
                 }
-                if (process_discard())
+                const bool handled = process_discard_timed();
+#if defined(__ZEPHYR__) && defined(CONFIG_OPENBMC_IPMI_LAT)
+                z_lat_conn_rwake++;
+                if (!handled)
+                {
+                    z_lat_conn_ridle++;
+                }
+#endif
+                if (handled)
                 {
                     read_immediate();
                 }
@@ -404,7 +480,7 @@ class connection : public sdbusplus::bus_t
     void read_immediate()
     {
         boost::asio::post(io_, [&] {
-            if (process_discard())
+            if (process_discard_timed())
             {
                 read_immediate();
             }
